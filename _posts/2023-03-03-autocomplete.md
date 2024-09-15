@@ -191,5 +191,145 @@ One issue with our code is that it returns false on both invalid input to the la
 # Back to code completion
 So what was the importance of all of this? Well, in the process of building a lexer and parser for our language, ANTLR also internally built an ARTN (augmented recursive transition network – essentially a DFA with support for state and recursion). In simpler terms, ANTLR built a state machine for our language. Using the array of tokens we received from the lexer, we can walk through this state machine, branching out as needed, and the outgoing edges of our set of valid end nodes will consist of our code completion options (valid end nodes consist of end nodes that are reached while consuming the entirety of the token array). Let’s highlight this with an example – for our toy language, the ARTN looks like:
 
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 3: The ARTN for the rule entry</figcaption>
+</figure>
+
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 4: The ARTN for the rule identifier</figcaption>
+</figure>
+
+The nodes are states, while the edges are labeled with a token (called atomic transitions) or ε (called epsilon transitions). Epsilon transitions are added to aid in the programmatic generation of state machines and are meant to be skipped (any state machine with epsilon transitions can be turned into a functionally equivalent state machine without them).
+
+Let’s say we wanted code completion for the string “[id1”. Sending this to the lexer would spit out the token array [LBRACKET, ID]. Now we walk the ARTN with this array of tokens.
+
+1. We start at state 0 and skip to state 4 due to the epsilon transition.
+2. We consume the first token (LBRACKET) to progress to state 8. Our token array is now [ID].
+3. At state 8, we have two branches – the left branch that enters the identifier rule and epsilon skips to state 14, and the right branch that epsilon skips to state 11.
+	* At state 11, our token array is not empty, and the outgoing edge, RBRACKET, does not match the token in the token array, ID. As a result, this is not a valid end node, and this branch is terminated.
+	* At state 14, we consume the last token in the array, ID, and move to state 15. Since we have no tokens left in our array, we add state 15 to our set of end nodes.
+Now, we look at our set of end nodes and collect all the tokens associated with the outgoing atomic transitions, skipping through the epsilon transitions. Since our set of end nodes only contains state 15, we get the list [COMMA].  We can then map this array of tokens to user friendly strings, and voila, we (almost) have code completion!
+
+Why almost? Well, what user friendly string do we map to if one of our code completion options is ID (e.g. if our input is “[“)? In our toy language, we might have a list of valid ids we could suggest here, but with a non-trivial language, here is where we have to deal with scoping. Let’s use an example in javascript to highlight this.
+
+```
+let globalVar = true
+[1]
+{
+ [2]
+ let scopeVar = true
+ [3]
+}
+[4]
+```
+
+Let’s say at each cursor position, 1-4, our code completion engine suggests an ID symbol. For the respective position, the valid ID mappings would be:
+
+1. globalVar
+2. globalVar, since we are before the definition of scopeVar
+3. globalVar and scopeVar, since we are past the definition of scopeVar
+4. globalVar, since scopeVar is out of scope
+
+As a result, we can’t trivially return all defined variables when we see an ID symbol. We need to return suggestions based on the variable scope at the cursor position. Typically, the way a scoping system for a language is implemented is by utilizing the generated visitor, and if you’re building your own language, you most likely have a system built out which you can extend to generate the scope for code completion. There is a catch though – the code completion engine in the majority of cases deals with incomplete code, and as a result the scope generator also needs to be modified to be able to work with incomplete code.
+
+# Implementation
+So to build code completion, we first need to build an engine that can walk the ANTLR ARTN and retrieve us the code completion tokens, and then we need a mechanism to retrieve the scope at the cursor position. Finally, we need some code to wire this all together and output the options to the UI.
+
+To walk the ANTLR ARTN, we heavily recommend using or adapting the [antlr4-c3 library](https://github.com/mike-lischke/antlr4-c3), specifically CodeCompletionCore.ts – we modified this library to work with the ANTLR4 javascript runtime here at Airkit. We won’t go into the details of implementing this library in this post, as this [blog post](https://tomassetti.me/code-completion-with-antlr4-c3/) does a great job of explaining the nuances.
+
+To get the scope at the cursor position, one option would be to adapt SymbolTable.ts in antlr4-c3 as highlighted in the blog post above. At Airkit, we chose to instead build out a system that handles scope as a linked list, and we then extended the ANTLR generated visitor to generate the scope at our cursor position. The implementation of this system is a topic for a future blog.
+
+Finally, to wire this all together, we ran our code completion and scope generator engines on our current input and then scraped the generated scope to get variable suggestions when ID is a valid code completion token. At the time of writing, Airkit’s expression editor is based on [monaco](https://microsoft.github.io/monaco-editor/), and so to surface suggestions to the UI we then registered a [completion item provider](https://microsoft.github.io/monaco-editor/typedoc/functions/languages.registerCompletionItemProvider.html), or a function that serves our valid code completion options based on the current context.
+
+# Further optimizations and additions
+
+## LL1 your grammar for better error correction
+When basing your symbol table generation off of the parse tree generated by ANTLR, implicitly you’re relying on ANTLR’s error correction to parse out a meaningful structure when the input sentence is incomplete. However, without a bit of tweaking, this error correction may not always be as powerful as you want it to be. This is an issue we ran into at Airkit when dealing with code completion on array bindings, specifically index and union bindings. Index bindings are for your standard array data accesses (e.g. arr[1] would return the element at index 1), while union bindings are for when you want the data at a selection of array indexes (e.g. arr[0, 2] returns an array containing the elements at index 0 and 2).
+
+We’ve built a simple grammar to highlight our issue.
+
+```
+entry: expression EOF;
+
+expression: identifier childBinding?;
+
+childBinding: bindableChild childBinding?;
+bindableChild: LBRACKET (indexedBinding | unionBinding) RBRACKET;
+
+indexedBinding: expression;
+unionBinding: expression (COMMA expression)+;
+
+identifier: ID;
+```
+
+Let’s say we have a global scope with the variable foo and the array arr. So for code completion on a string such as “arr[f”, we would expect one of our options to be the variable foo. However, the observed behavior was that our scope would not be generated properly and as a result we wouldn’t return any options for code completion. This was due to ANTLR’s error correction mechanism – it was outputting the following parse tree:
 
 
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 5: The parse tree for the string “arr[f”</figcaption>
+</figure>
+
+The red box around “f” means its an error node. As a result, our visitIdentifier visitor function wasn’t run as expected and the scope wasn’t being generated.
+
+Upon further inspection, we were able to attribute this to the layout of our grammar. What was happening was that during the generation of the parse tree, ANTLR would enter the bindableChild rule. It would then attempt to filter the potential options, indexedBinding and unionBinding, by peeking into the first element of the rule. However, both indexedBinding and unionBinding start with the exact same rule, expression, and as a result, ANTLR wasn’t able to differentiate between the two based on the information given. ANTLR then fails out and returns an error node for the “f”.
+
+We were able to solve this with a simple refactor to the grammar.
+
+```
+entry: expression EOF;
+
+expression: identifier childBinding?;
+
+childBinding: bindableChild childBinding?;
+bindableChild: LBRACKET expressionBinding RBRACKET;
+
+expressionBinding: expression unionBindingExtension?;
+unionBindingExtension: (COMMA union += expression)+;
+
+identifier: ID;
+```
+
+The corresponding parse tree for “arr[f” based on this grammar is:
+
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 6: The new parse tree for the string “arr[f”</figcaption>
+</figure>
+
+The difference is night and day – here we are able to generate a parse tree that enters expression and identifier and thus allows for a smarter scope generation which results in expected code completion options. This was all caused by refactoring the indexedBinding and unionBinding rules into one rule – expressionBinding. This expressionBinding rule combines all array binding rules that start with expression, and as thus, ANTLR is able to deterministically look ahead into expressionBinding and generate a more complete parse tree.
+
+In more technical terms, what we did here was make our grammar LL1 (or left lookahead 1). This means our parser only has to look ahead one token to create a valid parse tree. However, we don’t recommend arbitrarily making your language LL1, this can potentially explode the size of your grammar and make it very confusing to work with. Instead, we recommend identifying where poor error correction affects functionality negatively and spot correcting. While our example grammar has been completely converted to LL1, this is not the case with the Airscript production grammar.
+
+## Adding code completion to sample data
+One major annoyance when dealing with 3rd party APIs in a high code language is that the response is often not typed – getting the specific field you want is a very manual process that involves constantly switching tabs between your editor and API documentation.
+
+This is a situation in which Airkit shines. Due to the nature of Airkit Data Flows, each operation (such as a data transform or an http request) is separated to an individual frame which allows for a visually clean code flow design as well as operation isolated testing. While usually the output of each operation has a set type the code completion engine can utilize for suggestions in future frames, http requests are a prime example of when this isn’t the case. But in these situations, what we’re able to do instead is generate a type for you based on an example test run for the operation, and as a result we can give you full code completion functionality for the response of any api call!
+
+For example, let’s say we wanted a cat fact. We’ll start by requesting a list of cat facts.
+
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 7: The catfact HTTP request connection frame</figcaption>
+</figure>
+
+We then click run (shown below) to test the endpoint and generate sample data.
+
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 8: Running the frame once to generate sample data</figcaption>
+</figure>
+
+Now we want to isolate a single fact in a following transform operation. Normally, this is where we’d have to refer to the api documentation to understand the structure of the response. However, with Airkit, this is unnecessary as we have full code completion capabilities on the result by using the sample data!
+
+<figure>
+    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <figcaption>Figure 9: Full code completion action for the untyped api response</figcaption>
+</figure>
+
+Again, all of this is without any official support from the api devs!
+
+# In conclusion
+In this blog, we dove into the details of how programming languages and code completion engines work. We then talked about implementation and explored some of the more complex topics surrounding code completion. Ultimately, we hope that we were able to teach you something new, and if we’re lucky, maybe even inspire you to build a robust code completion engine of your own.
