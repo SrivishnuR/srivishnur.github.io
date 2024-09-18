@@ -6,7 +6,14 @@ categories: blog
 ---
 *The original blog link no longer exists after Airkit was acquired*
 
-<img src="/assets/autocomplete/start_gif.gif" alt="typecheck" width="80%"/>
+<figure>
+    <img src="/assets/autocomplete/start_gif.gif" />
+</figure>
+
+{% highlight javascript linenos %}
+foo = bar
+{% endhighlight %}
+
 
 Airscript, Airkit’s programming language, is what allows for the multitude of powerful features our low-code platform offers. Writing our own programming language allows for a very powerful custom feature set (e.g. variable level metadata boxing which allows us to track sensitive information across the whole system – blog on this coming soon). However, it also comes with tradeoffs – namely, you ditch the years of support other established languages have accumulated. One such example of this is something we often take for granted – intelligent code completion (also known as IntelliSense for those using Visual Studio Code).
 
@@ -16,7 +23,7 @@ In this blog, we’ll guide you through how we built Aircomplete – a robust co
 While a meaningful autocomplete system for the English language can be very complex due to its massive vocabulary and complex rulesets, code completion is relatively simple as in contrast, programming languages have well defined grammars and limited scopes in vocabulary. At a high level, a programming language can be seen as a definition for a state machine. A code completion engine walks that state machine given an input string in your language and outputs suggestions based on the outgoing edges from the final state.
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/full_artn.png" />
     <figcaption>Figure 1: A subset of an example language’s state machine</figcaption>
 </figure>
 
@@ -25,7 +32,7 @@ For example, in figure 1, from a final state of 11 the only code completion opti
 However, before we dive any deeper, we require a general understanding of how programming languages work. We’ll do this in the next section by building a programming language for id validation. For those with programming language experience, we recommend skipping to the **Back to code completion** section.
 
 # Building our own programming language
-Let’s say we want to build a toy language to validate a list of ids based on some proprietary id validation logic. Example sentences in our language would look like `[]`, `[id1,];`, `[id1, id2,];`, etc. Ultimately, we want a function idArrayValidator that takes in a string in our toy language and returns true or false based on whether all the ids in the list are valid.
+Let’s say we want to build a toy language to validate a list of ids based on some proprietary id validation logic. Example sentences in our language would look like `[]`, `[id1,];`, `[id1, id2,];`, etc. Ultimately, we want a function `idArrayValidator` that takes in a string in our toy language and returns true or false based on whether all the ids in the list are valid.
 
 This task requires three major steps.
 
@@ -105,7 +112,7 @@ When fed this grammar, ANTLR spits out a file named toyParser.js, which we could
 Our parse tree takes the form of a javascript object, but ANTLR provides us a very handy GUI tool called TestRig to aid in visualization. Here’s the parse tree for the string “[ foo, bar, ];”:
 
 <figure>
-    <img src="/assets/autocomplete/toy_parse_tree.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/toy_parse_tree.jpeg" />
     <figcaption>Figure 2: The parse tree for the string “[foo, bar,];”</figcaption>
 </figure>
 
@@ -192,12 +199,12 @@ One issue with our code is that it returns false on both invalid input to the la
 So what was the importance of all of this? Well, in the process of building a lexer and parser for our language, ANTLR also internally built an ARTN (augmented recursive transition network – essentially a DFA with support for state and recursion). In simpler terms, ANTLR built a state machine for our language. Using the array of tokens we received from the lexer, we can walk through this state machine, branching out as needed, and the outgoing edges of our set of valid end nodes will consist of our code completion options (valid end nodes consist of end nodes that are reached while consuming the entirety of the token array). Let’s highlight this with an example – for our toy language, the ARTN looks like:
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/full_artn.png" />
     <figcaption>Figure 3: The ARTN for the rule entry</figcaption>
 </figure>
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/rule_artn.png" />
     <figcaption>Figure 4: The ARTN for the rule identifier</figcaption>
 </figure>
 
@@ -268,7 +275,7 @@ Let’s say we have a global scope with the variable foo and the array arr. So f
 
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/old_parse_tree.png" />
     <figcaption>Figure 5: The parse tree for the string “arr[f”</figcaption>
 </figure>
 
@@ -295,7 +302,7 @@ identifier: ID;
 The corresponding parse tree for “arr[f” based on this grammar is:
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/new_parse_tree.png" />
     <figcaption>Figure 6: The new parse tree for the string “arr[f”</figcaption>
 </figure>
 
@@ -311,21 +318,21 @@ This is a situation in which Airkit shines. Due to the nature of Airkit Data Flo
 For example, let’s say we wanted a cat fact. We’ll start by requesting a list of cat facts.
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/request_details.png" />
     <figcaption>Figure 7: The catfact HTTP request connection frame</figcaption>
 </figure>
 
 We then click run (shown below) to test the endpoint and generate sample data.
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/sample_data.png" />
     <figcaption>Figure 8: Running the frame once to generate sample data</figcaption>
 </figure>
 
 Now we want to isolate a single fact in a following transform operation. Normally, this is where we’d have to refer to the api documentation to understand the structure of the response. However, with Airkit, this is unnecessary as we have full code completion capabilities on the result by using the sample data!
 
 <figure>
-    <img src="/assets/autocomplete/full_artn.png" alt="typecheck" width="80%"/>
+    <img src="/assets/autocomplete/end_gif.gif" />
     <figcaption>Figure 9: Full code completion action for the untyped api response</figcaption>
 </figure>
 
