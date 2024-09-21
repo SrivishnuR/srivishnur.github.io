@@ -8,7 +8,7 @@
 
 # Basic Site Settings
 locale                   : "en-US"
-title                    : "Srivishnu (Vishnu) Ramamurthi"
+title                    : "Vishnu's Hub"
 title_separator          : "-"
 name                     : &name "Srivishnu (Vishnu) Ramamurthi"
 description              : &description "personal description"
